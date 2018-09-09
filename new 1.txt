@@ -1,0 +1,568 @@
+/*************************************************************/
+/********       天线方向图因子(5路)计算模块(直接运行)     ****/
+/********          2017-04-18  Liuyian       *****************/
+/*************************************************************/
+#include <stdio.h>
+#include <math.h>
+#include <stdlib.h>
+#define PI 3.1415926535898
+#define cV 299792500            /*光速*/
+
+//雷达参数初始化
+struct  Radar_Parameter
+{
+	int Number;                     //雷达编号
+	char Radar_type;                //雷达类型：0-二坐标，1-三坐标；2-跟踪；3-警戒，4-相控阵
+	
+	//补
+	char Signal_RF_type;            //信号射频类型  1:常规;2：捷变;3：线性调频(LFM);4：二相位编码;5：四相位编码;6：非线性调频(NLFM);7：CW等*/
+	float Fre_change_range;         //频率捷变百分比,是指在带宽的1/2内的范围, (捷变时有效)
+	
+	char PRF_type;                  //重频类型,1:固定；2：抖动；3：参差；4：滑变//
+	float PRF_Jitter_range;         //重频抖动百分比d%, (重频抖动时有效)
+	int PRF_Irregular_number;       //重频参差数, (重频参差时有效)
+	float PRF_Irregular[8];         //最多7个参差数,没有参差时,以第一元素存放PRF值,(重频参差时有效,kHz)
+	int PRF_Slppery_number;         //重频滑变数  (重频滑变时有效)
+	float PRF_Slppery[8];           //最多7个等间隔滑变系数,没有滑变时,以第一元素存放PRF值.  (重频滑变时有效)
+	
+	char Emit_Ann_Az_Pattern;       //发射天线方位方向图类型,0:辛格,1:高斯  
+    char Emit_Ann_Ez_Pattern;       //发射天线俯仰方向图类型,0:辛格,1:高斯,2:余割,3:单脉冲 
+	
+	char Re_Ann_Az_Pattern;         //接收天线方位方向图类型,0:辛格,1:高斯,2:余割,3:单脉冲
+    char Re_Ann_Ez_Pattern;         //接收天线俯仰方向图类型,0:辛格,1:高斯,2:余割 
+	
+	float Mid_Frequency;            /*雷达发射频率(GHz)*/
+	
+    float Min_distance;             /*雷达最小作用距离km*/
+    float Max_distance;             /*雷达最大作用距离km*/
+	
+    float Ann_hight;                /*雷达天线架高m*/
+	
+	float Pt;                       /*发射功率kw*/
+    float Gt;                       /*发射天线增益(dB)*/
+	float Gr;                       /*接收天线增益(dB)*/
+	
+    float Pulse_width;              /*脉冲宽度us*/
+	
+	float cy_Frequency;             /*脉冲重复发射频率(KHz)*/
+	
+    float R_Loss;                   /*馈线损耗(dB)*/
+	
+    float Orientation_Beamwidth;    /*方位波束宽(度)*/
+    float Elevation_Beamwidth;      /*俯仰波束宽(度)*/
+	
+	float Pulse_D;                   //脉压比D
+	float Pulse_M;                   //脉冲积累改善因子M
+	
+	float Noise_Band;                //雷达工作时瞬时带宽(MHz)   //100/20/10/5//
+	float Noise_NF;                  //雷达接收机噪声系数(dB)
+	
+	char Pole_type;                  //0-水平，1-垂直，2-圆形
+	
+	//	float SF_Band;                   //伺服有效带宽(Hz)
+	
+	char ANN_Scan;                   //天线扫描方式:0-圆周，2--扇扫
+	
+	float ANN_Scan_left;             //扫描天线左边界方位，圆周扫默认为0
+	float ANN_Scan_right;            //扫描天线右边界方位，圆周扫默认为360
+	
+	float Scan_T;                    //天线扫描周期(s)
+	double Detect_Thred;             //目标检测门限(dBm)
+
+	//补充
+	float CentAzu;                  //为天线阵面的法线方位,是阵面范围的中心线角度。对固定天线,若天线阵面范围为（-45度，+45度），Azu=(-45+45)/2，否则默认为0
+	float CentEzu;                  //为天线阵面的法线俯仰,是阵面范围的中心线角度。对固定天线,若天线阵面范围为（-30度，+60度），Ezu=(-30+60)/2，否则默认为0
+	
+	float d_Az_1_Sidelobe;            //单脉冲有效，方位误差斜率
+	float d_Ez_1_Sidelobe;            //单脉冲有效，俯仰误差斜率
+}INIT_Radar; 
+
+////////////////////////////////////////////////////////////////////////////
+struct Auxi_Ann_Parameter            /*辅助天线初始化参数结构*/
+{
+	//注：辅助天线的增益应小于主天线波束增益，而大于主天线的副瓣增益
+    
+    //这里，默认两部辅助天线
+	float Ann_Auxi_Gain;              /*辅助天线增益(dB)*/
+    float Ann_Auxi_Angle;             /*辅助天线相对主天线偏角(度)*/
+    float Ann_Auxi_d;                 /*辅助天线相对主天线距离*/
+	
+    int AzSidelobe_P_n;               /*对自定义：方位正副瓣数*/
+    int AzSidelobe_N_n;               /*对自定义：方位负副瓣数*/
+	
+	
+    float Az_P_Sidelobe[10];         /*对自定义：方位正副瓣电平(dB)*/
+    float Az_N_Sidelobe[10];         /*对自定义：方位负副瓣电平(dB)*/
+	
+	//补
+	float CentAzu;                  //为天线阵面的法线方位,是阵面范围的中心线角度。对固定天线,若天线阵面范围为（-45度，+45度），Azu=(-45+45)/2，否则默认为0
+
+}AUXI[2];                             //假设辅助天线两部，用数组
+
+//计算目标相对于雷达的径距、方位、俯仰模块
+Object_TroPosphere_Radar_Transform(double Lt,double Bt,float Ht,double L0,double B0,float H0,float *rd,float *az,float *ez);
+
+//普通雷达天线方向图因子计算模块,2017-6-22
+void Get_Ann_Pattern(char Ann_Pattern,float dAz_Beammuth,float dEz_Beammuth,float AzBeamwidth,float EzBeamwidth,float *Ft_Pattern);
+
+void Ann_Pulse_Pattern(float d_AzBeammuth,float d_EzBeammuth,float Az_Beamwidth,float Ez_Beamwidth,
+					   float d_Az_1_Sidelobe,float d_Ez_1_Sidelobe,float *Ft_Main,float *Fr_dAz,float *Fr_dEz);//单脉冲“和差差”方向图因子
+//辅助天线方向图因子计算模块
+void AUXI_Ann_Pattern(float d_AzBeammuth,float Beamwidth,int Sidelobe_P_n,int Sidelobe_N_n,float *P_Sidelobe,float *N_Sidelobe,float *Ft_Pattern);
+
+
+main()
+{
+	int i,PN;
+
+	//////////////////////平台位置变量///////////////////////////////
+	double RLt,RBt;              //放雷达平台位置的经度、纬度(度)     
+	float RHt;                   //放雷达平台的高度（米）
+	
+	double OBjLt,OBjBt;          //放目标平台位置的经度、纬度（度）     
+	float OBjHt;                 //放目标平台的高度（米）		
+
+	///////////////////临时变量//////////////////////////////////////
+	float d_AzBeammuth;          //方位偏差（目标方位-雷达天线指向）
+	float d_EzBeammuth;          //俯仰偏差（目标仰角-雷达天线指向）
+    float AzBeamwidth;           //波束方位宽度(度)
+	float EzBeamwidth;           //波束俯仰宽度(度)
+
+	float rd;                    //放目标相对于雷达的径距
+	float az;                    //天线方位指向Az   (弧度) 
+	float ez;                    //天线仰角指向Az   (弧度) 
+    float Ft_AzPattern;          //放方位天线方向图因子
+    float Ft_EzPattern;          //放俯仰天线方向图因子
+	float Azu;                   //天线在雷达坐标系内的方位,(度)
+	float Ezu;                   //天线在雷达坐标系内的俯仰,(度)
+
+	float Ft_Main,Fr_dAz,Fr_dEz; //放“和差差”方向图因子
+	float Azu1,Azu2;
+	float AUXIFt_Pattern[2];
+	float StopTime;               //目标上的驻留时间，s
+	float PRI;                    //肪冲重复间隔，s
+	float AZPRI,EZPRI;            //方位、俯仰间隔角度，度
+	
+   	//假设雷达平台位置
+	RLt=120*PI/180;          //雷达平台位置经度，度转成弧度
+	RBt=20*PI/180;           //雷达平台位置纬度，度转成弧度     
+	RHt=100;                 //雷达平台的高度（米）
+
+	//假设目标位置
+	OBjLt=122*PI/180;          //目标平台位置经度，度转成弧度
+	OBjBt=21*PI/180;           //目标平台位置纬度，度转成弧度     
+	OBjHt=10000;               //目标平台的高度（米）	
+
+	//////////////////////
+	//假设第1部辅助天线,参数配置为：（界面中要根据下列参数设置两部）
+	AUXI[0].Ann_Auxi_Gain=15;           /*辅助天线1增益(dB)*/
+    AUXI[0].Ann_Auxi_Angle=5*PI/180;     //辅助天线1相对主天线偏角(度),转成弧度*/
+	
+    AUXI[0].Ann_Auxi_d=100;              /*辅助天线1相对主天线距离,米*/
+	
+    AUXI[0].AzSidelobe_P_n=10;              /*对自定义：方位正副瓣数*/
+    AUXI[0].AzSidelobe_N_n=10;              /*对自定义：方位负副瓣数*/
+	
+    AUXI[0].Az_P_Sidelobe[0]=0;            /*对自定义：方位正副瓣电平(dB)*/
+    AUXI[0].Az_P_Sidelobe[1]=-10;
+    AUXI[0].Az_P_Sidelobe[2]=-20;
+	AUXI[0].Az_P_Sidelobe[3]=-25;
+	AUXI[0].Az_P_Sidelobe[4]=-30;
+	AUXI[0].Az_P_Sidelobe[5]=-35;
+	AUXI[0].Az_P_Sidelobe[6]=-40;
+	AUXI[0].Az_P_Sidelobe[7]=-45;
+	AUXI[0].Az_P_Sidelobe[8]=-50;
+	AUXI[0].Az_P_Sidelobe[9]=-55;
+	
+	
+	AUXI[0].Az_N_Sidelobe[0]=0;            /*对自定义：方位负副瓣电平(dB)*/
+    AUXI[0].Az_N_Sidelobe[1]=-10;
+    AUXI[0].Az_N_Sidelobe[2]=-20;
+	AUXI[0].Az_N_Sidelobe[3]=-25;
+	AUXI[0].Az_N_Sidelobe[4]=-30;
+	AUXI[0].Az_N_Sidelobe[5]=-35;
+	AUXI[0].Az_N_Sidelobe[6]=-40;
+	AUXI[0].Az_N_Sidelobe[7]=-45;
+	AUXI[0].Az_N_Sidelobe[8]=-50;
+	AUXI[0].Az_N_Sidelobe[9]=-55;
+
+	//假设第2部辅助天线,参数配置为：（界面中要根据下列参数设置两部）
+	AUXI[1].Ann_Auxi_Gain=20;             /*辅助天线2增益(dB)*/
+    AUXI[1].Ann_Auxi_Angle=3*PI/180;      //辅助天线2相对主天线偏角(度),转成弧度*/
+	
+    AUXI[1].Ann_Auxi_d=100;               /*辅助天线1相对主天线距离,米*/
+	
+    AUXI[1].AzSidelobe_P_n=10;              /*对自定义：方位正副瓣数*/
+    AUXI[1].AzSidelobe_N_n=10;              /*对自定义：方位负副瓣数*/
+	
+    AUXI[1].Az_P_Sidelobe[0]=0;            /*对自定义：方位正副瓣电平(dB)*/
+    AUXI[1].Az_P_Sidelobe[1]=-11;
+    AUXI[1].Az_P_Sidelobe[2]=-21;
+	AUXI[1].Az_P_Sidelobe[3]=-26;
+	AUXI[1].Az_P_Sidelobe[4]=-31;
+	AUXI[1].Az_P_Sidelobe[5]=-36;
+	AUXI[1].Az_P_Sidelobe[6]=-41;
+	AUXI[1].Az_P_Sidelobe[7]=-46;
+	AUXI[1].Az_P_Sidelobe[8]=-51;
+	AUXI[1].Az_P_Sidelobe[9]=-56;
+	
+	
+	AUXI[1].Az_N_Sidelobe[0]=0;            /*对自定义：方位负副瓣电平(dB)*/
+    AUXI[1].Az_N_Sidelobe[1]=-11;
+    AUXI[1].Az_N_Sidelobe[2]=-21;
+	AUXI[1].Az_N_Sidelobe[3]=-26;
+	AUXI[1].Az_N_Sidelobe[4]=-31;
+	AUXI[1].Az_N_Sidelobe[5]=-36;
+	AUXI[1].Az_N_Sidelobe[6]=-41;
+	AUXI[1].Az_N_Sidelobe[7]=-46;
+	AUXI[1].Az_N_Sidelobe[8]=-51;
+	AUXI[1].Az_N_Sidelobe[9]=-56;
+
+	//说明：1: 二坐标雷达（一般用于搜索、警戒），只有方位天线方向图因子(一路,可外加2路辅助天线)
+	//      2: 三坐标雷达（一般用于目标跟踪、目标指示）。只有选择“单脉冲类型时”，产生3路，可外加2路辅助天线,即选择“单脉冲类型时”，可产生5路
+
+	//假设(界面设置读入)
+	INIT_Radar.Scan_T=1;                       //天线扫描周期(s)
+	INIT_Radar.ANN_Scan_left=0;                //扫描天线左边界方位(度)，圆周扫默认为0
+	INIT_Radar.ANN_Scan_right=360;             //扫描天线右边界方位(度)，圆周扫默认为360
+	INIT_Radar.Orientation_Beamwidth=1;        //方位波束宽(度)
+    INIT_Radar.Elevation_Beamwidth=2;          //俯仰波束宽(度)
+	INIT_Radar.cy_Frequency=1;                 //脉冲重复发射频率(KHz)
+
+	INIT_Radar.CentAzu=0.1;                    //为雷达天线阵面的法线方位,是阵面范围的中心线角度，度。界面上设置，相当于方位精度
+	INIT_Radar.CentEzu=0.2;                    //为雷达天线阵面的法线俯仰,是阵面范围的中心线角度，度。界面上设置，相当于俯仰精度
+
+	AUXI[0].CentAzu=0.01;                       //为辅助天线1阵面的法线方位,是阵面范围的中心线角度，度。界面上设置，相当于方位精度
+	AUXI[1].CentAzu=0.01;                       //为辅助天线2阵面的法线方位,是阵面范围的中心线角度，度。界面上设置，相当于方位精度
+
+	//计算目标上的驻留时间，s,（一个波束宽度）
+	StopTime=INIT_Radar.Scan_T*INIT_Radar.Elevation_Beamwidth/(INIT_Radar.ANN_Scan_right-INIT_Radar.ANN_Scan_left); 
+	//脉冲重复间隔
+	PRI=1.0/INIT_Radar.cy_Frequency/pow(10,3);                      //脉冲重复间隔，s
+
+    //目标上产生的脉冲数
+	PN=StopTime/PRI;                                                //整数
+	
+	AZPRI=INIT_Radar.Orientation_Beamwidth/PN;                      //脉冲之间方位相差的间隔角度，度
+	EZPRI=INIT_Radar.Elevation_Beamwidth/PN;                        //脉冲之间俯仰相差的间隔角度，度
+
+	AzBeamwidth=INIT_Radar.Orientation_Beamwidth*PI/180;            //方位波束宽度，转成弧度
+	EzBeamwidth=INIT_Radar.Elevation_Beamwidth*PI/180;              //俯仰波束宽度，转成弧度
+
+	printf("PRI=%f ms,StopTime=%f \n",PRI*1000,StopTime);                   //测试用，用完删除
+
+	printf("脉冲数PN=%d,输入d<回车> \n ",PN);
+
+	while(getchar()=='d')                   //读取数据链/次循环,时间触发
+	{
+		/////////////////仿真开始初始化//////////////////////
+		//调用：目标相对于雷达的径距、方位、俯仰模块
+		Object_TroPosphere_Radar_Transform(OBjLt,OBjBt,OBjHt,RLt,RBt,RHt,&rd,&az,&ez);//为天线轴线指向
+		
+	    printf("az=%f,ez=%f\n",az*180/PI,ez*180/PI);                      //测试用，用完删除
+
+		getchar();
+
+		//计算发射天线方位方向图传播因子
+		// 界面上设置的参数读入
+		//天线方向图类型: 0:辛格,1:高斯,2:余割,3:单脉冲（选择此种时，默认方位和俯仰一致）
+		INIT_Radar.Emit_Ann_Az_Pattern='0';                //假设方位方向图类型,一般选择：0、1
+	    INIT_Radar.Emit_Ann_Ez_Pattern='2';                //假设俯仰方向图类型，一般选择：0、1、2
+
+		//根据波束驻留时间和脉冲重复间隔PRI，计算天线扫描时的各时戳产生的天线方向图因子
+		for(i=0;i<PN;i++)//对每个脉冲，天线方向图因子不同，即产生调制
+		{
+			if(i<=PN/2)//偏差计算
+			{
+				//雷达天线
+				d_AzBeammuth=(PN/2-i)*AZPRI*PI/180+INIT_Radar.CentAzu*PI/180;           //方位偏差（目标方位-雷达天线指向)+测角精度,转成弧度
+				d_EzBeammuth=(PN/2-i)*EZPRI*PI/180+INIT_Radar.CentEzu*PI/180;           //仰角偏差（目标仰角-雷达天线指向)+测角精度,转成弧度
+		
+				//辅助天线
+				Azu1=(PN/2-i)*AZPRI*PI/180+AUXI[0].CentAzu*PI/180;                      //辅助天线1方位偏差（目标方位-雷达天线指向)+测角精度,转成弧度
+				Azu2=(PN/2-i)*AZPRI*PI/180+AUXI[1].CentAzu*PI/180;                      //辅助天线2方位偏差（目标仰角-雷达天线指向)+测角精度,转成弧度
+			}
+			else//偏差计算
+			{
+				//雷达天线
+				d_AzBeammuth=(i-PN/2)*AZPRI*PI/180+INIT_Radar.CentAzu*PI/180;           //方位偏差（目标方位-雷达天线指向)+测角精度,转成弧度
+				d_EzBeammuth=(i-PN/2)*EZPRI*PI/180+INIT_Radar.CentEzu*PI/180;           //仰角偏差（目标仰角-雷达天线指向)+测角精度,转成弧度
+			
+				//辅助天线
+				Azu1=(i-PN/2)*AZPRI*PI/180+AUXI[0].CentAzu*PI/180;                      //辅助天线1方位偏差（目标方位-雷达天线指向)+测角精度,转成弧度
+				Azu2=(i-PN/2)*AZPRI*PI/180+AUXI[1].CentAzu*PI/180;                      //辅助天线2方位偏差（目标仰角-雷达天线指向)+测角精度,转成弧度
+			
+			}//End偏差计算
+
+			if(INIT_Radar.Emit_Ann_Az_Pattern=='0'||INIT_Radar.Emit_Ann_Az_Pattern=='1')
+			{
+				//"方位"天线方向图因子
+//				d_AzBeammuth=i*AZPRI*PI/180-az;                 //方位偏差（目标方位-雷达天线指向),转成弧度
+
+				Get_Ann_Pattern(INIT_Radar.Emit_Ann_Az_Pattern,d_AzBeammuth,d_EzBeammuth,AzBeamwidth,EzBeamwidth,&Ft_AzPattern);
+				
+				printf("i=%d,方位方向图因子Ft_AzPattern=%f (dB)\n",i,Ft_AzPattern);                   //测试用，用完删除	
+			}
+			
+			if(INIT_Radar.Emit_Ann_Ez_Pattern=='0'||INIT_Radar.Emit_Ann_Ez_Pattern=='1'||INIT_Radar.Emit_Ann_Ez_Pattern=='2')
+			{
+				//"俯仰"天线方向图因子
+				Get_Ann_Pattern(INIT_Radar.Emit_Ann_Ez_Pattern,d_AzBeammuth,d_EzBeammuth,AzBeamwidth,EzBeamwidth,&Ft_EzPattern);
+
+				printf("i=%d,俯仰方向图因子Ft_EzPattern=%f (实数)\n\n",i,Ft_EzPattern);                   //测试用，用完删除
+				
+			}
+
+ 			//3: 单脉冲天线：“和差差”方向图因子
+			INIT_Radar.d_Az_1_Sidelobe=2.01051;                //单脉冲有效，方位误差斜率（界面上设置）
+			INIT_Radar.d_Ez_1_Sidelobe=2.0130;                 //单脉冲有效，俯仰误差斜率（界面上设置）
+				
+			//单脉冲雷达天线方向图因子计算模块
+			Ann_Pulse_Pattern(d_AzBeammuth,d_EzBeammuth,AzBeamwidth,EzBeamwidth,INIT_Radar.d_Az_1_Sidelobe,INIT_Radar.d_Ez_1_Sidelobe,&Ft_Main,&Fr_dAz,&Fr_dEz);
+
+			printf("2和差差Ft_Main=%e,Fr_dAz=%e,Fr_dEz=%e(dB)\n\n",Ft_Main,Fr_dAz,Fr_dEz);                   //测试用，用完删除
+		
+			//4: 辅助天线方向图因子计算模块
+			AUXI_Ann_Pattern(Azu1,AzBeamwidth,AUXI[0].AzSidelobe_P_n,AUXI[0].AzSidelobe_N_n,
+				AUXI[0].Az_P_Sidelobe,AUXI[0].Az_N_Sidelobe,&AUXIFt_Pattern[0]);//辅助天线1
+
+			AUXI_Ann_Pattern(Azu2,AzBeamwidth,AUXI[1].AzSidelobe_P_n,AUXI[1].AzSidelobe_N_n,
+				AUXI[1].Az_P_Sidelobe,AUXI[1].Az_N_Sidelobe,&AUXIFt_Pattern[1]);//辅助天线2
+			
+			//辅助天线2同上，只是设置参数不同而矣！
+			printf("辅助天线1方向图因子AUXIFt_Pattern=%f (dB)\n",AUXIFt_Pattern[0]);                   //测试用，用完删除
+			printf("辅助天线2方向图因子AUXIFt_Pattern=%f (dB)\n",AUXIFt_Pattern[1]);   
+   
+		}//for i
+
+	}//while
+
+	getchar();
+	
+}//End
+
+/************************************************************/
+/***            普通雷达天线方向图因子解算                ***/
+/**                刘以安  2011-2-22                      ***/
+//     输入：天线方向图类型 Ann_Pattern                     //
+//           方位偏差（目标方位-雷达天线指向）dAz_Beammuth  //
+//           俯仰偏差（目标方位-雷达天线指向）dEz_Beammuth  //
+//           方位波束宽度AzBeamwidth         (弧度)         //
+//           俯仰波束宽度EzBeamwidth         (弧度)         //
+//           主波束上的仰角Ez   (弧度)  此项不用视为0       //2017-6-22
+//     输出：天线方向图因子  Ft_Pattern  已平方 (dB)        //
+/************************************************************/
+void Get_Ann_Pattern(char Ann_Pattern,float dAz_Beammuth,float dEz_Beammuth,float AzBeamwidth,float EzBeamwidth,float *Ft_Pattern)
+{
+	int i;
+	float x,dx;
+	float  Ft;
+    
+	/*计算发射天线方位方向图传播因子,0:辛格,1:高斯,2:余割*/
+	if(Ann_Pattern=='0')
+	{
+		x=(float)(1.39156*(dAz_Beammuth)/(0.5*AzBeamwidth));      /*注：方位差Beammuth是杂波单元角与雷达指向角之差(弧度)*/
+		
+		if(x>=-PI&&x<PI)
+		{
+			Ft=(float)(0.5*(1+cos(dAz_Beammuth))*sin(x)/x);
+		}
+		else
+		{
+			Ft=(float)0.5*(1+cos(dAz_Beammuth)*sin(x)/x);      //实数
+		}
+		
+		Ft=(float)(20*log10(fabs(Ft)));                      /*转成分贝dB，这里直接计算出其平方值*/
+		
+	}
+	else if(Ann_Pattern=='1')  /*高斯*/
+	{
+		/*直接给出分贝dB*/
+		Ft=(float)((-3.0103*((dAz_Beammuth)/(0.5*AzBeamwidth))*((dAz_Beammuth)/(0.5*AzBeamwidth)))); /*注：方位差Beammuth是杂波单元角与雷达指向角之差*/
+		if(Ft<-30)
+			Ft=-30;   /*dB*/
+
+		Ft=2*Ft;      /*转成其平方值,dB*/
+	}
+	else if(Ann_Pattern=='2')
+	{
+		if(dEz_Beammuth<=0.5*EzBeamwidth)      
+		{
+			x=(float)(1.39156*(dEz_Beammuth)/(0.5*EzBeamwidth));
+			Ft=(float)(sin(x)/x);
+		}
+		else if(dEz_Beammuth>0.5*EzBeamwidth&&(dEz_Beammuth)<20*PI/180)
+		{
+			Ft=(float)(0.707*sin(0.5*EzBeamwidth)/sin(dEz_Beammuth));
+		}
+		else
+		{
+			x=(float)(1.39156*(dEz_Beammuth)/(0.5*EzBeamwidth));
+			Ft=(float)((0.707*(0.5*EzBeamwidth)/sin(dEz_Beammuth)*sin(x)/x));
+		}
+		Ft=(float)(20*log10(fabs(Ft)));   /*转成dB*/
+	}
+	
+   	*Ft_Pattern=Ft;                   //平方后的，dB
+}
+/****************************************************************/
+/***        单脉冲雷达天线方向图和、差差方向图因子计算      *****/
+/********   输入：                                          *****/
+/*******           目标方位偏差d_AzBeammuth(弧度)              **/
+/********          目标俯仰偏差d_EzBeammuth(弧度)              **/
+/********          方位波束宽度Az_Beamwidth(弧度)           *****/
+/********          俯仰波束宽度Ez_Beamwidth(弧度)           *****/
+/*******           方位归一化误差斜率d_Az_1_Sidelobe         ****/
+/*******           俯仰归一化误差斜率d_Ez_1_Sidelobe         ****/
+/*******    输出：                                         ******/
+/*******           和天线方向图因子Ft_Main  (一般小于2.5)    ****/
+/*******           方位天线方向图因子Fr_dAz                ******/
+/*******           俯仰天线方向图因子Fr_dEz                ******/
+/****************************************************************/
+void Ann_Pulse_Pattern(float d_AzBeammuth,float d_EzBeammuth,float Az_Beamwidth,float Ez_Beamwidth,
+					   float d_Az_1_Sidelobe,float d_Ez_1_Sidelobe,float *Ft_Main,float *Fr_dAz,float *Fr_dEz)
+{
+    int i;
+	double dAlf,dBlt;
+	double xx[4],yy[4];
+	double f[4],fxy[4];
+	double temp;
+	
+	dAlf=fabs(d_AzBeammuth);
+    dBlt=fabs(d_EzBeammuth);
+	
+    for(i=0;i<4;i++)
+	{
+		f[i]=(2*i+1)*PI/4.0;          //为各子波束在电轴坐标系所处的象限角,弧度
+		
+		temp=sin(1.18964*dAlf)-sin(0.707*Az_Beamwidth*cos(f[i]));
+		xx[i]=1.5708*temp/sin(0.5*Az_Beamwidth);                     //方位
+		
+		temp=sin(1.18964*dBlt)-sin(0.707*Ez_Beamwidth*cos(f[i]));
+		yy[i]=1.5708*temp/sin(0.5*Ez_Beamwidth);                     //俯仰
+		
+		fxy[i]=fabs((sin(xx[i])/xx[i])*(sin(yy[i])/yy[i]));          //辛格
+	}
+	
+	//实数带回(因子1次方)
+    *Ft_Main=0.616853*(fxy[0]+fxy[1]+fxy[2]+fxy[3]);                          /*发射天线的和方向图与接收的和相等*/
+	*Fr_dAz=0.2595*d_Az_1_Sidelobe*fabs((fxy[0]-fxy[1]-fxy[2]+fxy[3]));       /*方位差方向图因子*/
+	*Fr_dEz=0.2595*d_Ez_1_Sidelobe*fabs((fxy[0]+fxy[1]-fxy[2]-fxy[3]));       /*仰角差方向图因子*/
+	
+	//可分贝带回(相当因子平方)
+	//	*Ft_Main=20*log10(*Ft_Main);  /*转成分贝dB,包括平方*/
+	//    *Fr_dAz=20*log10(*Fr_dAz);
+	//	*Fr_dEz=20*log10(*Fr_dEz);
+}
+/***************************************************************************/
+/********     辅助天线方向图因子计算模块                           *********/
+/********           刘以安2010-3-9                                 *********/
+/********   输入： 目标方位偏差d_AzBeammuth(弧度)                         **/
+/********          方位波束宽度Beamwidth(弧度)                         *****/
+/********          正副瓣个数Sidelobe_P_n                              *****/
+/********          负副瓣个数Sidelobe_N_n                              *****/
+/********          正副瓣电平P_Sidelobe[]                              *****/
+/********          负副瓣电平N_Sidelobe[]                              *****/
+/********  输出：  辅助天线方向图因子Ft_Pattern(因自定义有可能超过1)   *****/
+/***************************************************************************/
+void AUXI_Ann_Pattern(float d_AzBeammuth,float Beamwidth,int Sidelobe_P_n,int Sidelobe_N_n,float *P_Sidelobe,float *N_Sidelobe,float *Ft_Pattern)
+{
+    int i;	
+	float x;
+	float  Ft;
+	float d_Beammuth;
+	float temp;
+	
+	d_Beammuth=d_AzBeammuth;
+	
+	temp=sin(d_Beammuth)/sin(0.5*Beamwidth);
+	
+    x=exp(-0.346574*temp*temp);  //i=0;
+	
+	if(x<pow(10,-2.5))x=pow(10,-2.5);
+	
+    if(Sidelobe_P_n>10)
+		Sidelobe_P_n=10;  /*两边各副瓣最多取10个*/
+	
+	for(i=1;i<=Sidelobe_P_n;i++)  //正副瓣
+	{
+		x=x+pow(-1,i)*pow(10,-P_Sidelobe[i]/20.0)*exp(-0.346574*(temp-4*i)*(temp-4*i));
+	}
+	
+	for(i=-Sidelobe_N_n;i<0;i++)  //负副瓣
+	{
+		x=x+pow(-1,i)*pow(10,-N_Sidelobe[i]/20.0)*exp(-0.346574*(temp-4*i)*(temp-4*i));
+	}
+	
+	//实数带回
+    Ft=fabs(x);                 
+
+	*Ft_Pattern=Ft;             //为因子1次方(实数)带回
+
+	//转成分贝带回
+//	*Ft_Pattern=20*log10(Ft);   //转成dB,已平方					   
+}
+/*******************************************************************/
+/***            目标在雷达/侦察机坐标系中位置计算模块            ***/
+/**                     刘以安  2011-2-10                        ***/
+/********      输入：目标平台位置（Lt,Bt,Ht）                *******/
+/********            雷达平台位置（L0,B0,H0）                *******/
+/********      输出：目标在雷达大地测量坐标系中的径距rd   (m)      //
+//                   目标在雷达大地测量坐标系中的方位az   (弧度)   //
+//                   目标在雷达大地测量坐标系中的仰角ez   (弧度)   //
+/*******************************************************************/
+Object_TroPosphere_Radar_Transform(double Lt,double Bt,float Ht,double L0,double B0,float H0,float *rd,float *az,float *ez)
+{
+	double a,e2;
+	double Nt,Nr;
+	double xt,yt,zt,x0,y0,z0;
+	double Rd,Az,Ez;
+	double x,y,z;
+	
+	a=6378137;
+	e2=0.0066943799014;
+	
+	Nt=a/sqrt(1-e2*sin(Bt)*sin(Bt));
+	Nr=a/sqrt(1-e2*sin(B0)*sin(B0));
+	
+	xt=(Nt+Ht)*cos(Bt)*cos(Lt);
+	yt=(Nt+Ht)*cos(Bt)*sin(Lt);
+	zt=(Nt*(1-e2)+Ht)*sin(Bt);
+	
+	x0=(Nr+H0)*cos(B0)*cos(L0);
+	y0=(Nr+H0)*cos(B0)*sin(L0);
+	z0=(Nr*(1-e2)+H0)*sin(B0);
+	
+	x=-(xt-x0)*sin(L0)+(yt-y0)*cos(L0);
+	y=-(xt-x0)*sin(B0)*cos(L0)-(yt-y0)*sin(B0)*sin(L0)+(zt-z0)*cos(B0);
+	z=(xt-x0)*cos(B0)*cos(L0)+(yt-y0)*cos(B0)*sin(L0)+(zt-z0)*sin(B0);
+	
+	Rd=sqrt(x*x+y*y+z*z);
+	if(x>=0&&y>0)
+	{
+		Az=atan(x/y);
+	}
+	else if(x>0&&fabs(y)<1.0e-3)
+	{
+		Az=0.5*PI;
+	}
+	else if(y<0)
+	{
+		Az=PI+atan(x/y);
+	}
+	else if(x<0&&fabs(y)<1.0e-3)
+	{
+		Az=1.5*PI;
+	}
+	else if(x<0&&y>0)
+	{
+		
+		Az=2*PI+atan(x/y);
+	}
+	
+	Ez=atan(z/sqrt(x*x+y*y)); 
+	
+	*rd=Rd;    //米
+	*az=Az;    //弧度
+	*ez=Ez;    //弧度
+}//
